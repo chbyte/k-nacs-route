@@ -4,6 +4,13 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>NACS 휴게소 길잡이</title>
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="theme-color" content="#0b6b4f">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="NACS 휴게소">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+KR:wght@400;600;700&family=IBM+Plex+Mono:wght@500&display=swap">
 <style>
@@ -561,6 +568,7 @@ $("file").addEventListener("change", async e=>{
 (function(){ const c=store.get("stations"); if(c&&c.list) $("dataInfo").textContent=`저장된 데이터: ${c.list.length}곳 (${c.source})`; })();
 M.init();
 useHere(true);   /* 시작할 때 출발지를 현재 위치로 */
+if ("serviceWorker" in navigator && location.protocol==="https:") navigator.serviceWorker.register("sw.js").catch(()=>{});
 </script>
 </body>
 </html>
