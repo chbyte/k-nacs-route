@@ -576,6 +576,17 @@ function naviUrl(s){
   });
   return "nmap://route/car?" + q.toString();
 }
+/* "지도에서 보기": 휴대폰은 네이버 지도 앱으로 열고, 앱이 없으면 네이버 지도 웹으로 */
+const IS_ANDROID = /Android/i.test(navigator.userAgent);
+const IS_IOS = /iPhone|iPad|iPod/i.test(navigator.userAgent);
+function placeUrl(s){
+  const name = s.name.replace(/\s*\(슈퍼차저\)$/,"");
+  const web = "https://map.naver.com/p/search/" + encodeURIComponent(name);
+  const q = new URLSearchParams({lat:s.lat, lng:s.lng, name, appname:"nacs.route.finder"}).toString();
+  if (IS_ANDROID) return `intent://place?${q}#Intent;scheme=nmap;action=android.intent.action.VIEW;category=android.intent.category.BROWSABLE;package=com.nhn.android.nmap;S.browser_fallback_url=${encodeURIComponent(web)};end`;
+  if (IS_IOS) return "nmap://place?" + q;
+  return web;
+}
 function esc(s){ return String(s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c])); }
 function render(found, totalKm, plan){
   const list=$("list"); list.innerHTML="";
@@ -598,7 +609,7 @@ function render(found, totalKm, plan){
       <div><p class="name">${esc(s.name)}</p>
       <div class="meta"><span>${s.sc?"테슬라 슈퍼차저":esc(s.op||"운영사 미상")}</span>${s.kw?`<span>최대 ${s.kw}kW</span>`:""}${reachChip}${avail}${side}</div>
       <div class="acts"><a class="nav" href="${naviUrl(s)}">네이버로 안내 (경유)</a>
-      <a href="https://map.naver.com/p/search/${encodeURIComponent(s.name)}" target="_blank" rel="noopener">지도에서 보기 →</a></div></div>`;
+      <a href="${placeUrl(s)}"${IS_ANDROID||IS_IOS?"":' target="_blank" rel="noopener"'}>지도에서 보기 →</a></div></div>`;
     el.addEventListener("click",e=>{ if(e.target.tagName!=="A") M.focus(s.lat,s.lng); });
     list.appendChild(el);
   });
