@@ -143,9 +143,56 @@ const SUPERCHARGER_REST_AREAS = [
 const status = (msg, err) => { const s=$("status"); s.textContent = msg; s.className = err ? "err" : ""; };
 
 /* ---------- 지도 ---------- */
-const map = L.map("map",{zoomControl:true}).setView([36.4,127.9],7);
-L.tileLayer("https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png",{maxZoom:19,subdomains:"abcd",attribution:"© OpenStreetMap contributors © CARTO"}).addTo(map);
-let layer = L.layerGroup().addTo(map);
+/* 카카오 키가 연결되면 카카오맵, 아니면 OpenStreetMap(Leaflet) */
+const M = {
+  kind:null, k:null, l:null, layer:null, objs:[],
+  async init(){
+    const el=$("map");
+    if (this.l){ this.l.remove(); this.l=null; }
+    el.innerHTML=""; this.objs=[];
+    if (await loadKakao(store.get("kakaoKey"))){
+      this.kind="kakao";
+      this.k=new kakao.maps.Map(el,{center:new kakao.maps.LatLng(36.4,127.9), level:13});
+      this.k.addControl(new kakao.maps.ZoomControl(), kakao.maps.ControlPosition.RIGHT);
+    } else {
+      this.kind="leaflet";
+      this.l=L.map(el,{zoomControl:true}).setView([36.4,127.9],7);
+      L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png",{maxZoom:18,attribution:"© OpenStreetMap"}).addTo(this.l);
+      this.layer=L.layerGroup().addTo(this.l);
+    }
+  },
+  clear(){
+    if (this.kind==="kakao"){ this.objs.forEach(o=>o.setMap(null)); this.objs=[]; }
+    else if (this.layer) this.layer.clearLayers();
+  },
+  line(coords,color){
+    if (this.kind==="kakao"){
+      const path=coords.map(c=>new kakao.maps.LatLng(c[0],c[1]));
+      const pl=new kakao.maps.Polyline({path, strokeColor:color, strokeWeight:5, strokeOpacity:.9});
+      pl.setMap(this.k); this.objs.push(pl);
+      const b=new kakao.maps.LatLngBounds(); path.forEach(p=>b.extend(p)); this.k.setBounds(b);
+    } else {
+      const line=L.polyline(coords,{color,weight:5}).addTo(this.layer);
+      this.l.fitBounds(line.getBounds(),{padding:[20,20]});
+    }
+  },
+  dot(lat,lng,color,title){
+    if (this.kind==="kakao"){
+      const d=document.createElement("div");
+      d.title=title;
+      d.style.cssText=`width:16px;height:16px;border-radius:50%;background:${color};border:2px solid #fff;box-shadow:0 1px 3px rgba(0,0,0,.4);cursor:pointer`;
+      d.addEventListener("click",()=>this.focus(lat,lng));
+      const o=new kakao.maps.CustomOverlay({position:new kakao.maps.LatLng(lat,lng), content:d, yAnchor:.5, xAnchor:.5});
+      o.setMap(this.k); this.objs.push(o);
+    } else {
+      L.circleMarker([lat,lng],{radius:8,color,fillOpacity:.9,weight:2}).bindPopup(esc(title)).addTo(this.layer);
+    }
+  },
+  focus(lat,lng){
+    if (this.kind==="kakao"){ this.k.setLevel(4); this.k.setCenter(new kakao.maps.LatLng(lat,lng)); }
+    else if (this.l) this.l.setView([lat,lng],15);
+  }
+};
 
 /* ---------- 외부 서비스 ---------- */
 async function geocode(q){
@@ -387,7 +434,7 @@ function render(found, totalKm){
       <div class="meta"><span>${s.sc?"테슬라 슈퍼차저":esc(s.op||"운영사 미상")}</span>${s.kw?`<span>최대 ${s.kw}kW</span>`:""}${avail}${side}</div>
       <div class="acts"><a class="nav" href="${naviUrl(s)}">네이버로 안내 (경유)</a>
       <a href="https://map.naver.com/p/search/${encodeURIComponent(s.name)}" target="_blank" rel="noopener">지도에서 보기 →</a></div></div>`;
-    el.addEventListener("click",e=>{ if(e.target.tagName!=="A") map.setView([s.lat,s.lng],15); });
+    el.addEventListener("click",e=>{ if(e.target.tagName!=="A") M.focus(s.lat,s.lng); });
     list.appendChild(el);
   }
 }
@@ -413,9 +460,9 @@ $("f").addEventListener("submit", async e=>{
     lastDest = {lat:b.lat, lng:b.lng, name:b.name};
     status("경로 계산 중…");
     const r = await route(a,b);
-    layer.clearLayers();
-    const line = L.polyline(r.coords,{color:getComputedStyle(document.documentElement).getPropertyValue("--sign").trim()||"#0b6b4f",weight:5}).addTo(layer);
-    map.fitBounds(line.getBounds(),{padding:[20,20]});
+    if (!M.kind) await M.init();
+    M.clear();
+    M.line(r.coords, getComputedStyle(document.documentElement).getPropertyValue("--sign").trim()||"#0b6b4f");
 
     let pool = [];
     try{ const st = await ensureStations(); if (st) pool = pool.concat(st); }
@@ -429,8 +476,7 @@ $("f").addEventListener("submit", async e=>{
       .sort((x,y)=>x.along-y.along);
 
     for (const s of found){
-      L.circleMarker([s.lat,s.lng],{radius:8,color:s.sc?"#c8202f":"#0b6b4f",fillOpacity:.9,weight:2})
-        .bindPopup(`<b>${esc(s.name)}</b><br>출발 후 ${Math.round(s.along)}km`).addTo(layer);
+      M.dot(s.lat, s.lng, s.sc?"#c8202f":"#0b6b4f", `${s.name} · 출발 후 ${Math.round(s.along)}km`);
     }
     render(found, r.km);
     if (noData) { $("settings").open = true; status(`전체 ${Math.round(r.km)}km · 충전기 데이터가 없어 슈퍼차저만 표시했어요. 아래 설정에서 인증키를 넣어 주세요.`, true); }
@@ -456,6 +502,7 @@ $("saveKakao").addEventListener("click", async ()=>{
   /* 실제 검색까지 되는지 확인 */
   try{ const r = await kakaoSearch("서울역"); say(r.length ? "카카오 주소 검색이 연결됐어요." : "연결은 됐는데 검색 결과가 비어요. 카카오맵 사용 설정을 확인해 주세요.", !r.length); }
   catch(e){ say("연결은 됐는데 검색이 거부됐어요. 카카오맵 사용 설정을 켜 주세요.", true); }
+  if (M.kind!=="kakao") await M.init();   /* 지도를 카카오맵으로 전환 */
 });
 $("key").value = store.get("key") || "";
 $("saveKey").addEventListener("click", async ()=>{
@@ -478,6 +525,7 @@ $("file").addEventListener("change", async e=>{
   }catch(err){ status(err.message,true); }
 });
 (function(){ const c=store.get("stations"); if(c&&c.list) $("dataInfo").textContent=`저장된 데이터: ${c.list.length}곳 (${c.source})`; })();
+M.init();
 </script>
 </body>
 </html>
