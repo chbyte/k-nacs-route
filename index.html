@@ -144,7 +144,7 @@ const status = (msg, err) => { const s=$("status"); s.textContent = msg; s.class
 
 /* ---------- 지도 ---------- */
 const map = L.map("map",{zoomControl:true}).setView([36.4,127.9],7);
-L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png",{maxZoom:18,attribution:"© OpenStreetMap"}).addTo(map);
+L.tileLayer("https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png",{maxZoom:19,subdomains:"abcd",attribution:"© OpenStreetMap contributors © CARTO"}).addTo(map);
 let layer = L.layerGroup().addTo(map);
 
 /* ---------- 외부 서비스 ---------- */
