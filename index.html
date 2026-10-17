@@ -50,6 +50,12 @@ input,select{font:inherit;color:var(--fg);background:var(--bg);border:1px solid 
 .results li:hover,.results li:focus{background:var(--bg);outline:none}
 .results .t{font-weight:600;font-size:.9rem}
 .results .a{font-size:.78rem;color:var(--muted)}
+.optbtn{display:flex;justify-content:space-between;align-items:center;gap:10px;text-align:left;padding:10px 12px}
+.optsum{color:var(--muted);font-weight:400;font-size:.82rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+dialog{border:0;padding:0;border-radius:14px;background:var(--panel);color:var(--fg);width:min(440px,calc(100vw - 32px));max-width:none}
+dialog::backdrop{background:rgba(0,0,0,.45)}
+.dlg{display:grid;gap:12px;padding:18px}
+.dlg h2{margin:0;font-size:1.05rem}
 .row{display:grid;grid-template-columns:1fr 1fr;gap:10px}
 @media (max-width:480px){.row{grid-template-columns:1fr}}
 button{font:inherit;font-weight:600;border:0;border-radius:8px;padding:12px;background:var(--sign);color:var(--sign-fg);cursor:pointer}
@@ -120,6 +126,10 @@ code{font-family:var(--f-mono);font-size:.85em}
     <label>남은 주행거리 (차 화면의 km, 선택)
       <input id="rangeKm" type="number" inputmode="numeric" min="0" max="1000" placeholder="예: 320 — 넣으면 갈 수 있는 곳과 추천 충전지를 표시">
     </label>
+    <button type="button" class="ghost optbtn" id="optOpen" aria-haspopup="dialog"><span>옵션</span><span class="optsum" id="optSum"></span></button>
+    <dialog id="optDlg" aria-labelledby="optTitle">
+     <div class="dlg">
+      <h2 id="optTitle">검색 옵션</h2>
     <div class="row">
       <label>경로에서 최대 거리
         <select id="radius"><option value="0.5">500m (권장)</option><option value="1">1km</option><option value="2">2km</option></select>
@@ -131,6 +141,9 @@ code{font-family:var(--f-mono);font-size:.85em}
     <label>테슬라 슈퍼차저
       <select id="scRadius"><option value="2">경로에서 2km 이내</option><option value="5" selected>경로에서 5km 이내</option><option value="10">경로에서 10km 이내</option><option value="0">표시 안 함</option></select>
     </label>
+      <button type="button" id="optDone">적용</button>
+     </div>
+    </dialog>
     <button id="go" type="submit">경로에서 찾기</button>
   </form>
 
@@ -672,6 +685,18 @@ $("file").addEventListener("change", async e=>{
 M.init();
 useHere(true);   /* 시작할 때 출발지를 현재 위치로 */
 renderChips();
+/* 옵션 팝업: 선택값 기억 + 요약 표시 */
+const OPT_IDS=["radius","side","scRadius"];
+function optSummary(){
+  const t=id=>{ const s=$(id); return s.options[s.selectedIndex].text.replace(/\s*\(.*\)/,""); };
+  const sc=$("scRadius").value==="0" ? "끔" : t("scRadius").replace("경로에서 ","").replace(" 이내","");
+  $("optSum").textContent = `휴게소 ${t("radius")} · ${$("side").value==="same"?"진행방향":"양방향"} · 슈퍼차저 ${sc}`;
+}
+{ const o=store.get("opts")||{}; OPT_IDS.forEach(id=>{ if(o[id]!=null && [...$(id).options].some(x=>x.value===o[id])) $(id).value=o[id]; }); optSummary(); }
+OPT_IDS.forEach(id=>$(id).addEventListener("change",()=>{ store.set("opts",Object.fromEntries(OPT_IDS.map(i=>[i,$(i).value]))); optSummary(); }));
+$("optOpen").addEventListener("click",()=>{ const d=$("optDlg"); if (d.showModal) d.showModal(); else d.setAttribute("open",""); });
+$("optDone").addEventListener("click",()=>{ const d=$("optDlg"); if (d.close) d.close(); else d.removeAttribute("open"); });
+$("optDlg").addEventListener("click",e=>{ if(e.target===e.currentTarget) $("optDone").click(); });
 { const rk=store.get("rangeKm"); if (rk) $("rangeKm").value=rk; }
 { const rc=getRecent(); if (rc.length && $("to").value==="부산역"){ $("to").value=rc[0].name; pick("to",rc[0]); } }
 if ("serviceWorker" in navigator && location.protocol==="https:") navigator.serviceWorker.register("sw.js").catch(()=>{});
