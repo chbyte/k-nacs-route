@@ -113,6 +113,7 @@ code{font-family:var(--f-mono);font-size:.85em}
       <div><b>상세주소 검색</b>: 카카오 개발자 사이트(developers.kakao.com)에서 앱을 만들고 <b>JavaScript 키</b>를 넣으면 도로명·지번 주소와 상호명으로 정확하게 찾습니다. 앱 설정의 플랫폼 → Web에 이 페이지 주소(도메인)를 등록해야 해요. 키가 없으면 무료 지도 검색(정확도 낮음)을 씁니다.</div>
       <label>카카오 JavaScript 키<input id="kakaoKey" placeholder="JavaScript 키 붙여넣기" autocomplete="off"></label>
       <button type="button" class="ghost" id="saveKakao">카카오 키 저장</button>
+      <div id="kakaoMsg" role="status"></div>
       <hr style="border:0;border-top:1px solid var(--line);width:100%">
       <div>충전기 정보는 공공데이터포털의 <b>한국환경공단_전기자동차 충전소 정보</b> API에서 받아옵니다. 공공데이터포털에서 활용신청하면 개발계정은 바로 승인되고, 받은 <b>일반 인증키</b>를 아래에 넣으면 됩니다. 이 기기 브라우저에만 저장돼요.</div>
       <label>공공데이터 인증키<input id="key" placeholder="인증키 붙여넣기" autocomplete="off"></label>
@@ -440,12 +441,21 @@ $("f").addEventListener("submit", async e=>{
 
 $("kakaoKey").value = store.get("kakaoKey") || "";
 $("saveKakao").addEventListener("click", async ()=>{
+  const msg=$("kakaoMsg"), btn=$("saveKakao");
+  const say=(t,err)=>{ msg.textContent=t; msg.style.color = err ? "var(--tesla)" : "var(--ok)"; };
   const k=$("kakaoKey").value.trim(); store.set("kakaoKey",k); kakaoReady=null;
-  if (!k){ status("카카오 키를 지웠어요. 기본 검색을 사용합니다."); return; }
-  status("카카오 검색 연결 중…");
+  if (!k){ say("카카오 키를 지웠어요. 기본 검색을 사용합니다."); return; }
+  btn.disabled=true; say("저장했어요. 카카오 연결 확인 중… (최대 10초)");
   const ok = await loadKakao(k);
-  if (!ok) kakaoReady = null;
-  status(ok ? "카카오 주소 검색이 연결됐어요." : "카카오 연결에 실패했어요. 키와, 카카오 앱 설정의 Web 도메인 등록을 확인해 주세요.", !ok);
+  btn.disabled=false;
+  if (!ok){
+    kakaoReady = null;
+    say("카카오 연결에 실패했어요. ① JavaScript 키가 맞는지 ② JavaScript SDK 도메인에 https://chbyte.github.io 를 넣었는지 ③ 카카오맵 사용 설정이 켜져 있는지 확인해 주세요. 설정을 바꿨다면 페이지를 새로고침한 뒤 다시 저장해 주세요.", true);
+    return;
+  }
+  /* 실제 검색까지 되는지 확인 */
+  try{ const r = await kakaoSearch("서울역"); say(r.length ? "카카오 주소 검색이 연결됐어요." : "연결은 됐는데 검색 결과가 비어요. 카카오맵 사용 설정을 확인해 주세요.", !r.length); }
+  catch(e){ say("연결은 됐는데 검색이 거부됐어요. 카카오맵 사용 설정을 켜 주세요.", true); }
 });
 $("key").value = store.get("key") || "";
 $("saveKey").addEventListener("click", async ()=>{
