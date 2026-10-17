@@ -1,5 +1,5 @@
 /* 앱 화면 파일만 저장하고, 지도·검색·충전기 데이터는 항상 새로 받음 */
-const CACHE = "nacs-v2";
+const CACHE = "nacs-v3";
 const SHELL = ["./", "./index.html", "./manifest.webmanifest", "./icon-192.png", "./icon-512.png"];
 
 self.addEventListener("install", e => {

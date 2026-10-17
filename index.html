@@ -67,6 +67,20 @@ details .inner{display:grid;gap:10px;margin-top:10px;font-size:.88rem;color:var(
 .km{font-family:var(--f-mono);font-variant-numeric:tabular-nums;background:var(--sign);color:var(--sign-fg);border-radius:6px;text-align:center;padding:6px 0;font-size:.95rem;line-height:1.2}
 .km small{display:block;font-size:.7rem;opacity:.85}
 .card.sc .km{background:var(--tesla)}
+.card.far{opacity:.5}
+.card.rec{border:2px solid var(--sign)}
+.card.sc.rec{border-color:var(--tesla)}
+.chip.rec{background:var(--sign);color:var(--sign-fg);border-color:var(--sign);font-weight:700}
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chips:empty{display:none}
+.dchip{display:inline-flex;align-items:center;border:1px solid var(--line);border-radius:99px;background:var(--bg);overflow:hidden;max-width:100%}
+.dchip button{background:transparent;color:var(--fg);font-weight:500;font-size:.82rem;padding:6px 10px;border-radius:0}
+.dchip .nm{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:12em}
+.dchip .pin{padding:6px 9px 6px 2px;color:var(--muted)}
+.dchip.pinned{border-color:var(--sign)}
+.dchip.pinned .pin{color:var(--warn)}
+.banner{background:var(--panel);border:1px solid var(--line);border-left:4px solid var(--sign);border-radius:8px;padding:10px 12px;font-size:.9rem}
+.banner.warn{border-left-color:var(--warn)}
 .card{scroll-margin-top:calc(env(safe-area-inset-top,0px) + 12px);transition:box-shadow .3s,border-color .3s}
 .card.hit{border-color:var(--sign);box-shadow:0 0 0 3px color-mix(in srgb,var(--sign) 35%,transparent)}
 .card.sc.hit{border-color:var(--tesla);box-shadow:0 0 0 3px color-mix(in srgb,var(--tesla) 35%,transparent)}
@@ -101,7 +115,11 @@ code{font-family:var(--f-mono);font-size:.85em}
         <button type="button" class="ghost" data-search="to">검색</button></div>
       <div class="picked" id="to-picked"></div>
       <ul class="results" id="to-results" hidden></ul>
+      <div class="chips" id="to-chips"></div>
     </div>
+    <label>남은 주행거리 (차 화면의 km, 선택)
+      <input id="rangeKm" type="number" inputmode="numeric" min="0" max="1000" placeholder="예: 320 — 넣으면 갈 수 있는 곳과 추천 충전지를 표시">
+    </label>
     <div class="row">
       <label>경로에서 최대 거리
         <select id="radius"><option value="0.5">500m (권장)</option><option value="1">1km</option><option value="2">2km</option></select>
@@ -279,6 +297,32 @@ async function showResults(which){
     return list;
   }catch(e){ ul.innerHTML='<li><span class="a">검색에 실패했어요. 잠시 후 다시 시도해 주세요.</span></li>'; return []; }
 }
+/* 최근 목적지 5곳 + 고정(★) 목적지 */
+function getRecent(){ const v=store.get("recentTo"); return Array.isArray(v)?v:[]; }
+function saveRecent(list){
+  const pinned=list.filter(x=>x.pin), rest=list.filter(x=>!x.pin).slice(0,5);
+  store.set("recentTo",[...pinned,...rest]); renderChips();
+}
+function sameSpot(a,b){ return Math.abs(a.lat-b.lat)<1e-4 && Math.abs(a.lng-b.lng)<1e-4; }
+function addRecent(p){
+  if (!p || p.name==="현재 위치") return;
+  const list=getRecent(); const old=list.find(x=>sameSpot(x,p));
+  const item={name:p.name, addr:p.addr||"", lat:p.lat, lng:p.lng, pin: !!(old&&old.pin)};
+  saveRecent([item, ...list.filter(x=>!sameSpot(x,p))]);
+}
+function renderChips(){
+  const box=$("to-chips"); box.innerHTML="";
+  getRecent().forEach((p,i)=>{
+    const c=document.createElement("span"); c.className="dchip"+(p.pin?" pinned":"");
+    const nm=document.createElement("button"); nm.type="button"; nm.className="nm"; nm.textContent=p.name; nm.title=p.addr||p.name;
+    nm.addEventListener("click",()=>{ $("to").value=p.name; pick("to",p); });
+    const pin=document.createElement("button"); pin.type="button"; pin.className="pin"; pin.textContent=p.pin?"★":"☆";
+    pin.setAttribute("aria-label", p.pin ? p.name+" 고정 해제" : p.name+" 고정");
+    pin.addEventListener("click",()=>{ const l=getRecent(); l[i].pin=!l[i].pin; saveRecent(l); });
+    c.append(nm,pin); box.appendChild(c);
+  });
+}
+
 async function resolvePlace(which){
   if (picked[which]) return picked[which];
   if (which==="from" && $("from").value.trim()==="현재 위치") return useHere(false);
@@ -391,19 +435,27 @@ function setStations(list, source){
   store.set("stations",{t:Date.now(), source, list});
   $("dataInfo").textContent = `불러온 NACS 휴게소 충전소: ${list.length}곳 (${source})`;
 }
+/* 사용 가능 여부는 수시로 바뀌므로, 받은 지 5분이 지났으면 경로를 찾을 때마다 새로 받음 */
+let stationsAt = 0, stationsStale = false;
 async function ensureStations(){
-  if (stations) return stations;
-  const c = store.get("stations");
-  if (c && c.list && Date.now()-c.t < 6*3600e3){ stations=c.list; $("dataInfo").textContent=`저장된 데이터 사용: ${c.list.length}곳 (${c.source})`; return stations; }
-  const key = store.get("key");
+  const c = store.get("stations"), key = store.get("key");
+  stationsStale = false;
+  if (c && c.list && Date.now()-c.t < 5*60e3){ stations=c.list; stationsAt=c.t; return stations; }
   if (key){
-    status("충전기 데이터를 받는 중…");
-    setStations(toStations(await fetchApi(key)), "공공데이터 API");
-    return stations;
+    try{
+      status("충전기 상태 새로 받는 중…");
+      setStations(toStations(await fetchApi(key)), "공공데이터 API");
+      stationsAt = Date.now();
+      return stations;
+    }catch(e){
+      if (c && c.list){ stations=c.list; stationsAt=c.t; stationsStale=true; return stations; }
+      throw e;
+    }
   }
-  if (c && c.list){ stations=c.list; return stations; }
+  if (c && c.list){ stations=c.list; stationsAt=c.t; return stations; }
   return null;
 }
+function hhmm(t){ const d=new Date(t); return String(d.getHours()).padStart(2,"0")+":"+String(d.getMinutes()).padStart(2,"0"); }
 
 /* ---------- 경로와 거리 계산 ---------- */
 function prep(coords){
@@ -428,6 +480,26 @@ function locate(R, lat, lng){
   return best;
 }
 
+/* ---------- 배터리 기준 도달 판단 ----------
+   고속도로에서는 차에 표시된 주행거리보다 덜 가므로 85%만 믿고, 20km는 여유로 남김.
+   경로를 벗어난 곳은 왕복 거리만큼 더 든다고 봄. */
+function planReach(found, routeKm, rangeKm){
+  const usable = Math.max(0, rangeKm*0.85 - 20);
+  for (const s of found){
+    s.cost = s.along + (s.d>0.5 ? 2*s.d : 0);
+    s.reach = s.cost <= usable;
+    s.rec = false;
+  }
+  const toDest = usable >= routeKm;
+  if (!toDest){
+    const reach = found.filter(s=>s.reach);
+    const good = reach.filter(s=> s.sc || !s.known || s.free>0);
+    const best = (good.length?good:reach).reduce((a,b)=> !a || b.along>a.along ? b : a, null);
+    if (best) best.rec = true;
+  }
+  return {usable, toDest};
+}
+
 /* ---------- 화면 ---------- */
 /* 네이버 지도 앱 길안내: 출발=현재 위치, 경유=휴게소, 도착=입력한 도착지 */
 let lastDest = null;
@@ -440,17 +512,26 @@ function naviUrl(s){
   return "nmap://route/car?" + q.toString();
 }
 function esc(s){ return String(s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c])); }
-function render(found, totalKm){
+function render(found, totalKm, plan){
   const list=$("list"); list.innerHTML="";
+  if (plan){
+    const b=document.createElement("div");
+    const rec=found.find(s=>s.rec);
+    if (plan.toDest){ b.className="banner"; b.textContent=`충전 없이 도착할 수 있어요. 여유 약 ${Math.round(plan.usable-totalKm)}km (고속도로 소모와 여유분 20km를 감안한 추정).`; }
+    else if (rec){ b.className="banner"; b.textContent=`출발 후 ${Math.round(rec.along)}km 지점 "${rec.name}"에서 충전하는 걸 추천해요. 지금 배터리로 약 ${Math.round(plan.usable)}km까지 갈 수 있다고 봤어요.`; }
+    else { b.className="banner warn"; b.textContent=`지금 배터리로 약 ${Math.round(plan.usable)}km까지만 갈 수 있어서 경로 위 충전지까지 닿기 어려워요. 가까운 충전소를 먼저 찾아보세요.`; }
+    list.appendChild(b);
+  }
   if (!found.length){ list.innerHTML='<div class="empty">이 경로 근처에서 찾은 NACS 충전 휴게소가 없어요. 거리를 1km로 늘리거나 "양방향 모두"로 바꿔 보세요.</div>'; return; }
   found.forEach((s,i)=>{
-    const el=document.createElement("div"); el.className="card"+(s.sc?" sc":""); el.id="card-"+i;
+    const el=document.createElement("div"); el.className="card"+(s.sc?" sc":"")+(s.reach===false?" far":"")+(s.rec?" rec":""); el.id="card-"+i;
+    const reachChip = s.rec ? '<span class="chip rec">추천 충전지</span>' : (s.reach===false ? '<span class="chip warn">도달 어려움</span>' : "");
     const side = s.d > 0.5 ? `<span class="chip">경로에서 ${s.d.toFixed(1)}km</span>` : s.d*1000 < 40 ? "" : (s.right ? '<span class="chip ok">진행방향 쪽(추정)</span>' : '<span class="chip warn">반대편(추정)</span>');
     const avail = s.sc ? '<span class="chip">테슬라 앱에서 운영·대수 확인</span>'
       : (s.known ? `<span class="chip ${s.free?'ok':'warn'}">사용가능 ${s.free}/${s.n}기</span>` : `<span class="chip">NACS ${s.n}기</span>`);
     el.innerHTML = `<div class="km">${Math.round(s.along)}<small>km</small></div>
       <div><p class="name">${esc(s.name)}</p>
-      <div class="meta"><span>${s.sc?"테슬라 슈퍼차저":esc(s.op||"운영사 미상")}</span>${s.kw?`<span>최대 ${s.kw}kW</span>`:""}${avail}${side}</div>
+      <div class="meta"><span>${s.sc?"테슬라 슈퍼차저":esc(s.op||"운영사 미상")}</span>${s.kw?`<span>최대 ${s.kw}kW</span>`:""}${reachChip}${avail}${side}</div>
       <div class="acts"><a class="nav" href="${naviUrl(s)}">네이버로 안내 (경유)</a>
       <a href="https://map.naver.com/p/search/${encodeURIComponent(s.name)}" target="_blank" rel="noopener">지도에서 보기 →</a></div></div>`;
     el.addEventListener("click",e=>{ if(e.target.tagName!=="A") M.focus(s.lat,s.lng); });
@@ -528,12 +609,22 @@ $("f").addEventListener("submit", async e=>{
       .sort((x,y)=>x.along-y.along);
 
     for (const [i,s] of found.entries()){
-      M.dot(s.lat, s.lng, s.sc?"#c8202f":"#0b6b4f", `${s.name} · 출발 후 ${Math.round(s.along)}km`, ()=>showCard(i));
+      M.dot(s.lat, s.lng, s.reach===false?"#8a958f":(s.sc?"#c8202f":"#0b6b4f"), `${s.name} · 출발 후 ${Math.round(s.along)}km`, ()=>showCard(i));
     }
-    render(found, r.km);
+    const rangeKm = +$("rangeKm").value;
+    store.set("rangeKm", $("rangeKm").value);
+    const plan = rangeKm>0 ? planReach(found, r.km, rangeKm) : null;
+    if (!plan) found.forEach(s=>{ s.reach=undefined; s.rec=false; });
+    render(found, r.km, plan);
+    addRecent(b);
     $("status").scrollIntoView({behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth", block:"start"});
     if (noData) { $("settings").open = true; status(`전체 ${Math.round(r.km)}km · 충전기 데이터가 없어 슈퍼차저만 표시했어요. 아래 설정에서 인증키를 넣어 주세요.`, true); }
-    else { const sc=found.filter(s=>s.sc).length; status(`전체 ${Math.round(r.km)}km · NACS 충전 휴게소 ${found.length-sc}곳 · 슈퍼차저 ${sc}곳`); }
+    else {
+      const sc=found.filter(s=>s.sc).length;
+      const age = stationsAt ? ` · 충전기 상태 ${hhmm(stationsAt)} 기준` : "";
+      const stale = stationsStale ? " (새 상태를 못 받아 이전 정보예요)" : "";
+      status(`전체 ${Math.round(r.km)}km · NACS 충전 휴게소 ${found.length-sc}곳 · 슈퍼차저 ${sc}곳${age}${stale}`, stationsStale);
+    }
   }catch(err){ status(err.message || "문제가 생겼어요. 잠시 후 다시 시도해 주세요.", true); }
   finally{ btn.disabled=false; }
 });
@@ -580,6 +671,9 @@ $("file").addEventListener("change", async e=>{
 (function(){ const c=store.get("stations"); if(c&&c.list) $("dataInfo").textContent=`저장된 데이터: ${c.list.length}곳 (${c.source})`; })();
 M.init();
 useHere(true);   /* 시작할 때 출발지를 현재 위치로 */
+renderChips();
+{ const rk=store.get("rangeKm"); if (rk) $("rangeKm").value=rk; }
+{ const rc=getRecent(); if (rc.length && $("to").value==="부산역"){ $("to").value=rc[0].name; pick("to",rc[0]); } }
 if ("serviceWorker" in navigator && location.protocol==="https:") navigator.serviceWorker.register("sw.js").catch(()=>{});
 </script>
 </body>
