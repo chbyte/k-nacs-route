@@ -79,7 +79,7 @@ code{font-family:var(--f-mono);font-size:.85em}
   <form id="f">
     <div class="place">
       <label for="from">출발지</label>
-      <div class="sbox"><input id="from" value="서울역" autocomplete="off" placeholder="도로명 주소, 지번, 장소 이름">
+      <div class="sbox"><input id="from" value="현재 위치" autocomplete="off" placeholder="도로명 주소, 지번, 장소 이름">
         <button type="button" class="ghost" data-search="from">검색</button>
         <button type="button" class="ghost" id="here" title="현재 위치를 출발지로">현재 위치</button></div>
       <div class="picked" id="from-picked"></div>
@@ -104,8 +104,8 @@ code{font-family:var(--f-mono);font-size:.85em}
   </form>
 
   <div id="status"></div>
+  <div id="list"><div class="empty">도착지를 넣고 "경로에서 찾기"를 누르면 경로 위 충전 휴게소가 여기에 나옵니다.</div></div>
   <div id="map"></div>
-  <div id="list"><div class="empty">출발지와 도착지를 넣고 "경로에서 찾기"를 누르세요.</div></div>
 
   <details id="settings">
     <summary>설정 (주소 검색 · 충전기 데이터)</summary>
@@ -267,6 +267,7 @@ async function showResults(which){
 }
 async function resolvePlace(which){
   if (picked[which]) return picked[which];
+  if (which==="from" && $("from").value.trim()==="현재 위치") return useHere(false);
   const list=await showResults(which);
   if (list.length){ pick(which,list[0]); return list[0]; }
   return null;
@@ -276,14 +277,18 @@ for (const which of ["from","to"]){
   $(which).addEventListener("keydown",e=>{ if(e.key==="Enter"){ e.preventDefault(); showResults(which); } });
 }
 document.querySelectorAll("[data-search]").forEach(b=>b.addEventListener("click",()=>showResults(b.dataset.search)));
-$("here").addEventListener("click",()=>{
-  if (!navigator.geolocation){ status("이 브라우저는 현재 위치를 지원하지 않아요.", true); return; }
-  status("현재 위치 확인 중…");
-  navigator.geolocation.getCurrentPosition(
-    p=>{ $("from").value="현재 위치"; pick("from",{name:"현재 위치", addr:"", lat:p.coords.latitude, lng:p.coords.longitude}); status(""); },
-    ()=>status("현재 위치를 가져오지 못했어요. 브라우저의 위치 권한을 확인해 주세요.", true),
-    {enableHighAccuracy:true, timeout:10000});
-});
+/* 현재 위치를 출발지로. 성공하면 위치를 돌려주고, 실패하면 null */
+function useHere(quiet){
+  return new Promise(res=>{
+    if (!navigator.geolocation){ if(!quiet) status("이 브라우저는 현재 위치를 지원하지 않아요.", true); return res(null); }
+    if (!quiet) status("현재 위치 확인 중…");
+    navigator.geolocation.getCurrentPosition(
+      p=>{ $("from").value="현재 위치"; const v={name:"현재 위치", addr:"", lat:p.coords.latitude, lng:p.coords.longitude}; pick("from",v); if(!quiet) status(""); res(v); },
+      ()=>{ $("from-picked").textContent=""; if(!quiet) status("현재 위치를 가져오지 못했어요. 브라우저의 위치 권한을 허용하거나 출발지를 직접 입력해 주세요.", true); res(null); },
+      {enableHighAccuracy:true, timeout:10000, maximumAge:60000});
+  });
+}
+$("here").addEventListener("click",()=>useHere(false));
 
 async function route(a,b){
   const url = `https://router.project-osrm.org/route/v1/driving/${a.lng},${a.lat};${b.lng},${b.lat}?overview=full&geometries=geojson`;
@@ -479,6 +484,7 @@ $("f").addEventListener("submit", async e=>{
       M.dot(s.lat, s.lng, s.sc?"#c8202f":"#0b6b4f", `${s.name} · 출발 후 ${Math.round(s.along)}km`);
     }
     render(found, r.km);
+    $("status").scrollIntoView({behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth", block:"start"});
     if (noData) { $("settings").open = true; status(`전체 ${Math.round(r.km)}km · 충전기 데이터가 없어 슈퍼차저만 표시했어요. 아래 설정에서 인증키를 넣어 주세요.`, true); }
     else status(`전체 ${Math.round(r.km)}km · NACS 충전 휴게소 ${found.length}곳`);
   }catch(err){ status(err.message || "문제가 생겼어요. 잠시 후 다시 시도해 주세요.", true); }
@@ -526,6 +532,7 @@ $("file").addEventListener("change", async e=>{
 });
 (function(){ const c=store.get("stations"); if(c&&c.list) $("dataInfo").textContent=`저장된 데이터: ${c.list.length}곳 (${c.source})`; })();
 M.init();
+useHere(true);   /* 시작할 때 출발지를 현재 위치로 */
 </script>
 </body>
 </html>
