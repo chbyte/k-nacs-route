@@ -100,6 +100,9 @@ code{font-family:var(--f-mono);font-size:.85em}
         <select id="side"><option value="same">진행방향 쪽만 (추정)</option><option value="all">양방향 모두</option></select>
       </label>
     </div>
+    <label>테슬라 슈퍼차저
+      <select id="scRadius"><option value="2">경로에서 2km 이내</option><option value="5" selected>경로에서 5km 이내</option><option value="10">경로에서 10km 이내</option><option value="0">표시 안 함</option></select>
+    </label>
     <button id="go" type="submit">경로에서 찾기</button>
   </form>
 
@@ -431,7 +434,7 @@ function render(found, totalKm){
   if (!found.length){ list.innerHTML='<div class="empty">이 경로 근처에서 찾은 NACS 충전 휴게소가 없어요. 거리를 1km로 늘리거나 "양방향 모두"로 바꿔 보세요.</div>'; return; }
   for (const s of found){
     const el=document.createElement("div"); el.className="card"+(s.sc?" sc":"");
-    const side = s.d*1000 < 40 ? "" : (s.right ? '<span class="chip ok">진행방향 쪽(추정)</span>' : '<span class="chip warn">반대편(추정)</span>');
+    const side = s.d > 0.5 ? `<span class="chip">경로에서 ${s.d.toFixed(1)}km</span>` : s.d*1000 < 40 ? "" : (s.right ? '<span class="chip ok">진행방향 쪽(추정)</span>' : '<span class="chip warn">반대편(추정)</span>');
     const avail = s.sc ? '<span class="chip">테슬라 앱에서 운영·대수 확인</span>'
       : (s.known ? `<span class="chip ${s.free?'ok':'warn'}">사용가능 ${s.free}/${s.n}기</span>` : `<span class="chip">NACS ${s.n}기</span>`);
     el.innerHTML = `<div class="km">${Math.round(s.along)}<small>km</small></div>
@@ -444,7 +447,30 @@ function render(found, totalKm){
   }
 }
 
-async function superchargers(){
+/* 카카오 장소 검색으로 경로 주변 슈퍼차저 찾기: 경로를 따라 약 15km마다 반경 10km 검색 */
+async function kakaoSuperchargers(R, coords){
+  if (!(await loadKakao(store.get("kakaoKey")))) return null;
+  const svc=kakao.maps.services, ps=new svc.Places();
+  const pts=[]; let next=0;
+  for (let i=0;i<coords.length;i++){ if (R.cum[i]>=next){ pts.push(coords[i]); next+=15; } }
+  pts.push(coords[coords.length-1]);
+  const jobs=[];
+  for (const [la,ln] of pts) for (const q of ["테슬라 수퍼차저","테슬라 슈퍼차저"]) jobs.push([q,la,ln]);
+  const seen=new Map();
+  const one=([q,la,ln])=>new Promise(res=>{
+    ps.keywordSearch(q,(d,st)=>{
+      if (st===svc.Status.OK) for (const x of d){
+        if (!/(수퍼|슈퍼)\s*차저|supercharger/i.test(x.place_name)) continue;
+        if (!seen.has(x.id)) seen.set(x.id,{name:x.place_name, addr:x.road_address_name||x.address_name, lat:+x.y, lng:+x.x, n:0, free:0, known:0, kw:0, sc:true});
+      }
+      res();
+    },{location:new kakao.maps.LatLng(la,ln), radius:10000, size:15});
+  });
+  for (let i=0;i<jobs.length;i+=4){ await Promise.all(jobs.slice(i,i+4).map(one)); }
+  return [...seen.values()];
+}
+async function superchargers(R, coords){
+  try{ const k = await kakaoSuperchargers(R, coords); if (k) return k; }catch(e){}
   const out=[];
   for (const n of SUPERCHARGER_REST_AREAS){
     try{
@@ -473,11 +499,13 @@ $("f").addEventListener("submit", async e=>{
     try{ const st = await ensureStations(); if (st) pool = pool.concat(st); }
     catch(err){ status(err.message, true); }
     const noData = !pool.length;
-    pool = pool.concat(await superchargers());
+    const R = prep(r.coords), radius=+$("radius").value, scRadius=+$("scRadius").value, sameOnly=$("side").value==="same";
+    if (scRadius>0){ status("경로 주변 슈퍼차저 찾는 중…"); pool = pool.concat(await superchargers(R, r.coords)); }
 
-    const R = prep(r.coords), radius=+$("radius").value, sameOnly=$("side").value==="same";
+    /* 경로 바로 옆(휴게소)은 진행방향 필터 적용, 경로를 벗어난 슈퍼차저는 방향과 무관 */
     const found = pool.map(s=>({...s, ...locate(R,s.lat,s.lng)}))
-      .filter(s=> s.d<=radius && (!sameOnly || s.d*1000<40 || s.right))
+      .filter(s=> s.sc ? s.d<=Math.max(scRadius, radius) : s.d<=radius)
+      .filter(s=> !sameOnly || s.d>0.5 || s.d*1000<40 || s.right)
       .sort((x,y)=>x.along-y.along);
 
     for (const s of found){
@@ -486,7 +514,7 @@ $("f").addEventListener("submit", async e=>{
     render(found, r.km);
     $("status").scrollIntoView({behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth", block:"start"});
     if (noData) { $("settings").open = true; status(`전체 ${Math.round(r.km)}km · 충전기 데이터가 없어 슈퍼차저만 표시했어요. 아래 설정에서 인증키를 넣어 주세요.`, true); }
-    else status(`전체 ${Math.round(r.km)}km · NACS 충전 휴게소 ${found.length}곳`);
+    else { const sc=found.filter(s=>s.sc).length; status(`전체 ${Math.round(r.km)}km · NACS 충전 휴게소 ${found.length-sc}곳 · 슈퍼차저 ${sc}곳`); }
   }catch(err){ status(err.message || "문제가 생겼어요. 잠시 후 다시 시도해 주세요.", true); }
   finally{ btn.disabled=false; }
 });
