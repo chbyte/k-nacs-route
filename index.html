@@ -56,6 +56,16 @@ dialog{border:0;padding:0;border-radius:14px;background:var(--panel);color:var(-
 dialog::backdrop{background:rgba(0,0,0,.45)}
 .dlg{display:grid;gap:12px;padding:18px}
 .dlg h2{margin:0;font-size:1.05rem}
+.sbox .star{color:var(--warn);padding:8px 11px}
+.fsec{font-size:.78rem;color:var(--muted);letter-spacing:.04em;margin-top:2px}
+.flist{list-style:none;margin:0;padding:0;border:1px solid var(--line);border-radius:8px;max-height:34vh;overflow:auto}
+.flist li{display:flex;align-items:center;border-bottom:1px solid var(--line)}
+.flist li:last-child{border-bottom:0}
+.flist .sel{flex:1;min-width:0;background:transparent;color:var(--fg);text-align:left;display:grid;gap:1px;padding:10px 12px;border-radius:0;font-weight:600}
+.flist .sel small{font-weight:400;color:var(--muted);font-size:.78rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.flist .act{background:transparent;color:var(--muted);font-weight:500;font-size:.8rem;padding:10px 12px;border-radius:0;white-space:nowrap}
+.flist .none{padding:10px 12px;color:var(--muted);font-size:.85rem}
+#favAdd{color:var(--warn);border-color:var(--warn)}
 .row{display:grid;grid-template-columns:1fr 1fr;gap:10px}
 @media (max-width:480px){.row{grid-template-columns:1fr}}
 button{font:inherit;font-weight:600;border:0;border-radius:8px;padding:12px;background:var(--sign);color:var(--sign-fg);cursor:pointer}
@@ -111,17 +121,18 @@ code{font-family:var(--f-mono);font-size:.85em}
       <label for="from">출발지</label>
       <div class="sbox"><input id="from" value="현재 위치" autocomplete="off" placeholder="도로명 주소, 지번, 장소 이름">
         <button type="button" class="ghost" data-search="from">검색</button>
-        <button type="button" class="ghost" id="here" title="현재 위치를 출발지로">현재 위치</button></div>
+        <button type="button" class="ghost" id="here" title="현재 위치를 출발지로">현재 위치</button>
+        <button type="button" class="ghost star" data-fav="from" aria-label="출발지 즐겨찾기">★</button></div>
       <div class="picked" id="from-picked"></div>
       <ul class="results" id="from-results" hidden></ul>
     </div>
     <div class="place">
       <label for="to">도착지</label>
       <div class="sbox"><input id="to" value="부산역" autocomplete="off" placeholder="도로명 주소, 지번, 장소 이름">
-        <button type="button" class="ghost" data-search="to">검색</button></div>
+        <button type="button" class="ghost" data-search="to">검색</button>
+        <button type="button" class="ghost star" data-fav="to" aria-label="도착지 즐겨찾기">★</button></div>
       <div class="picked" id="to-picked"></div>
       <ul class="results" id="to-results" hidden></ul>
-      <div class="chips" id="to-chips"></div>
     </div>
     <label>남은 주행거리 (차 화면의 km, 선택)
       <input id="rangeKm" type="number" inputmode="numeric" min="0" max="1000" placeholder="예: 320 — 넣으면 갈 수 있는 곳과 추천 충전지를 표시">
@@ -142,6 +153,17 @@ code{font-family:var(--f-mono);font-size:.85em}
       <select id="scRadius"><option value="2">경로에서 2km 이내</option><option value="5" selected>경로에서 5km 이내</option><option value="10">경로에서 10km 이내</option><option value="0">표시 안 함</option></select>
     </label>
       <button type="button" id="optDone">적용</button>
+     </div>
+    </dialog>
+    <dialog id="favDlg" aria-labelledby="favTitle">
+     <div class="dlg">
+      <h2 id="favTitle">즐겨찾기</h2>
+      <button type="button" class="ghost" id="favAdd" hidden></button>
+      <div class="fsec">즐겨찾기</div>
+      <ul class="flist" id="favList"></ul>
+      <div class="fsec">최근</div>
+      <ul class="flist" id="recList"></ul>
+      <button type="button" id="favClose">닫기</button>
      </div>
     </dialog>
     <button id="go" type="submit">경로에서 찾기</button>
@@ -310,31 +332,61 @@ async function showResults(which){
     return list;
   }catch(e){ ul.innerHTML='<li><span class="a">검색에 실패했어요. 잠시 후 다시 시도해 주세요.</span></li>'; return []; }
 }
-/* 최근 목적지 5곳 + 고정(★) 목적지 */
-function getRecent(){ const v=store.get("recentTo"); return Array.isArray(v)?v:[]; }
-function saveRecent(list){
-  const pinned=list.filter(x=>x.pin), rest=list.filter(x=>!x.pin).slice(0,5);
-  store.set("recentTo",[...pinned,...rest]); renderChips();
-}
+/* 즐겨찾기(출발·도착 공용) + 최근 6곳 */
+function getList(k){ const v=store.get(k); return Array.isArray(v)?v:[]; }
 function sameSpot(a,b){ return Math.abs(a.lat-b.lat)<1e-4 && Math.abs(a.lng-b.lng)<1e-4; }
+const slim = p => ({name:p.name, addr:p.addr||"", lat:p.lat, lng:p.lng});
+(function migrate(){   /* 예전 버전의 고정 목적지를 즐겨찾기로 옮김 */
+  const old=getList("recentTo"); if (!old.length) return;
+  if (!store.get("favs")) store.set("favs", old.filter(x=>x.pin).map(slim));
+  if (!store.get("recent")) store.set("recent", old.map(slim).slice(0,6));
+  store.set("recentTo", []);
+})();
 function addRecent(p){
   if (!p || p.name==="현재 위치") return;
-  const list=getRecent(); const old=list.find(x=>sameSpot(x,p));
-  const item={name:p.name, addr:p.addr||"", lat:p.lat, lng:p.lng, pin: !!(old&&old.pin)};
-  saveRecent([item, ...list.filter(x=>!sameSpot(x,p))]);
+  store.set("recent", [slim(p), ...getList("recent").filter(x=>!sameSpot(x,p))].slice(0,6));
 }
-function renderChips(){
-  const box=$("to-chips"); box.innerHTML="";
-  getRecent().forEach((p,i)=>{
-    const c=document.createElement("span"); c.className="dchip"+(p.pin?" pinned":"");
-    const nm=document.createElement("button"); nm.type="button"; nm.className="nm"; nm.textContent=p.name; nm.title=p.addr||p.name;
-    nm.addEventListener("click",()=>{ $("to").value=p.name; pick("to",p); });
-    const pin=document.createElement("button"); pin.type="button"; pin.className="pin"; pin.textContent=p.pin?"★":"☆";
-    pin.setAttribute("aria-label", p.pin ? p.name+" 고정 해제" : p.name+" 고정");
-    pin.addEventListener("click",()=>{ const l=getRecent(); l[i].pin=!l[i].pin; saveRecent(l); });
-    c.append(nm,pin); box.appendChild(c);
-  });
+let favFor="to";
+const dlgOpen = d => d.showModal ? d.showModal() : d.setAttribute("open","");
+const dlgClose = d => d.close ? d.close() : d.removeAttribute("open");
+function openFav(which){
+  favFor=which;
+  $("favTitle").textContent=(which==="from"?"출발지":"도착지")+" 고르기";
+  renderFav(); dlgOpen($("favDlg"));
 }
+function renderFav(){
+  const favs=getList("favs"), cur=picked[favFor];
+  const canAdd = cur && cur.name!=="현재 위치" && !favs.some(x=>sameSpot(x,cur));
+  $("favAdd").hidden=!canAdd;
+  if (canAdd) $("favAdd").textContent=`★ "${cur.name}" 즐겨찾기에 추가`;
+  fillList("favList", favs, true, "아직 없어요. 장소를 검색해 고른 뒤 여기서 추가하세요.");
+  fillList("recList", getList("recent").filter(r=>!favs.some(f=>sameSpot(f,r))), false, "최근에 찾은 곳이 없어요.");
+}
+function fillList(id, items, isFav, emptyText){
+  const ul=$(id); ul.innerHTML="";
+  if (!items.length){ const li=document.createElement("li"); li.className="none"; li.textContent=emptyText; ul.appendChild(li); return; }
+  for (const p of items){
+    const li=document.createElement("li");
+    const sel=document.createElement("button"); sel.type="button"; sel.className="sel";
+    const nm=document.createElement("span"); nm.textContent=p.name;
+    const ad=document.createElement("small"); ad.textContent=p.addr||"";
+    sel.append(nm,ad);
+    sel.addEventListener("click",()=>{ $(favFor).value=p.name; pick(favFor,p); dlgClose($("favDlg")); });
+    const act=document.createElement("button"); act.type="button"; act.className="act";
+    act.textContent = isFav ? "삭제" : "☆ 추가";
+    act.setAttribute("aria-label", (isFav?"즐겨찾기에서 삭제: ":"즐겨찾기에 추가: ")+p.name);
+    act.addEventListener("click",()=>{
+      const favs=getList("favs");
+      store.set("favs", isFav ? favs.filter(x=>!sameSpot(x,p)) : [...favs, slim(p)]);
+      renderFav();
+    });
+    li.append(sel,act); ul.appendChild(li);
+  }
+}
+document.querySelectorAll("[data-fav]").forEach(b=>b.addEventListener("click",()=>openFav(b.dataset.fav)));
+$("favAdd").addEventListener("click",()=>{ const cur=picked[favFor]; if(!cur) return; store.set("favs",[...getList("favs"), slim(cur)]); renderFav(); });
+$("favClose").addEventListener("click",()=>dlgClose($("favDlg")));
+$("favDlg").addEventListener("click",e=>{ if(e.target===e.currentTarget) dlgClose($("favDlg")); });
 
 async function resolvePlace(which){
   if (picked[which]) return picked[which];
@@ -629,7 +681,7 @@ $("f").addEventListener("submit", async e=>{
     const plan = rangeKm>0 ? planReach(found, r.km, rangeKm) : null;
     if (!plan) found.forEach(s=>{ s.reach=undefined; s.rec=false; });
     render(found, r.km, plan);
-    addRecent(b);
+    addRecent(a); addRecent(b);
     $("status").scrollIntoView({behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth", block:"start"});
     if (noData) { $("settings").open = true; status(`전체 ${Math.round(r.km)}km · 충전기 데이터가 없어 슈퍼차저만 표시했어요. 아래 설정에서 인증키를 넣어 주세요.`, true); }
     else {
@@ -684,7 +736,6 @@ $("file").addEventListener("change", async e=>{
 (function(){ const c=store.get("stations"); if(c&&c.list) $("dataInfo").textContent=`저장된 데이터: ${c.list.length}곳 (${c.source})`; })();
 M.init();
 useHere(true);   /* 시작할 때 출발지를 현재 위치로 */
-renderChips();
 /* 옵션 팝업: 선택값 기억 + 요약 표시 */
 const OPT_IDS=["radius","side","scRadius"];
 function optSummary(){
@@ -698,7 +749,7 @@ $("optOpen").addEventListener("click",()=>{ const d=$("optDlg"); if (d.showModal
 $("optDone").addEventListener("click",()=>{ const d=$("optDlg"); if (d.close) d.close(); else d.removeAttribute("open"); });
 $("optDlg").addEventListener("click",e=>{ if(e.target===e.currentTarget) $("optDone").click(); });
 { const rk=store.get("rangeKm"); if (rk) $("rangeKm").value=rk; }
-{ const rc=getRecent(); if (rc.length && $("to").value==="부산역"){ $("to").value=rc[0].name; pick("to",rc[0]); } }
+{ const rc=getList("recent"); if (rc.length && $("to").value==="부산역"){ $("to").value=rc[0].name; pick("to",rc[0]); } }
 if ("serviceWorker" in navigator && location.protocol==="https:") navigator.serviceWorker.register("sw.js").catch(()=>{});
 </script>
 </body>
